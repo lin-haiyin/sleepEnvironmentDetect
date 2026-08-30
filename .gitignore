@@ -1,0 +1,7 @@
+build/
+build-no-psram/
+tmp/
+sdkconfig
+sdkconfig.old
+main/secrets.h
+*.pyc
