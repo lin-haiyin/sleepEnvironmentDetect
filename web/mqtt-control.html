@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Sleep Environment Detect MQTT Console</title>
+  <script src="https://unpkg.com/mqtt@5.10.3/dist/mqtt.min.js"></script>
+  <style>
+    :root { color:#3f2330; background:#fff4f7; font:16px/1.5 Inter,ui-sans-serif,system-ui,sans-serif; }
+    body { max-width:980px; margin:0 auto; padding:32px 18px 56px; }
+    header { border-bottom:2px solid #f2b8ca; padding-bottom:22px; }
+    h1 { color:#c22d62; font-size:2rem; margin:0; } h1 span { color:#e66087; }
+    .lead,.note { color:#785766; margin:.35rem 0 0; }
+    section { background:#fff; border:1px solid #f0bfd0; border-radius:8px; box-shadow:0 3px 12px #9a38551a; margin-top:18px; padding:18px; }
+    h2 { color:#a51e51; font-size:1.1rem; margin:0 0 14px; }
+    .grid,.cards { display:grid; gap:12px; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); }
+    label { color:#755160; display:grid; font-size:.82rem; gap:5px; }
+    input { border:1px solid #e5a7bc; border-radius:5px; box-sizing:border-box; color:#3f2330; font:inherit; padding:9px; width:100%; }
+    input:focus { outline:2px solid #f48fb1; outline-offset:1px; }
+    button { background:#fff; border:1px solid #dc8baa; border-radius:5px; color:#8e1945; cursor:pointer; font:inherit; font-weight:650; margin:4px 4px 0 0; padding:8px 12px; }
+    button.primary { background:#d9396d; border-color:#d9396d; color:#fff; } button:hover:not(:disabled),button.active { background:#ffe0eb; border-color:#c62e60; }
+    button:disabled { cursor:not-allowed; opacity:.45; }.toolbar { align-items:center; display:flex; flex-wrap:wrap; gap:4px; }
+    .status { font-size:.9rem; font-weight:700; margin-left:8px; }.online { color:#24724b; }.offline { color:#ab3153; }
+    .card { background:#fff8fb; border-left:3px solid #e9779c; min-height:70px; padding:11px; }.name,.meta { color:#85616e; font-size:.8rem; }.value { color:#bd2759; font-size:1.35rem; font-weight:750; margin-top:5px; }.invalid { color:#a72b48; }
+    pre { background:#391b28; border-radius:5px; color:#ffeaf1; margin:10px 0 0; max-height:260px; overflow:auto; padding:12px; white-space:pre-wrap; word-break:break-word; }
+    code { background:#ffe7ef; border-radius:3px; padding:1px 4px; }
+  </style>
+</head>
+<body>
+  <header><h1>Sleep <span>Environment</span> Detect</h1><p class="lead">Credential-free MQTT WebSocket console. Enter your own broker details locally.</p></header>
+  <section><h2>Connection</h2><div class="grid">
+    <label>MQTT WebSocket URL<input id="url" placeholder="wss://broker.example.com:port/mqtt" autocomplete="url"></label>
+    <label>Device ID<input id="device" value="sleep-env-01" autocomplete="off"></label>
+    <label>Username<input id="user" autocomplete="username"></label>
+    <label>Password<input id="pass" type="password" autocomplete="current-password"></label>
+  </div><div class="toolbar"><button id="connect" class="primary">Connect</button><button id="disconnect">Disconnect</button><span id="status" class="status offline">Disconnected</span></div><p class="note">The password is never stored by this page.</p></section>
+  <section><h2>Topics</h2><div class="grid"><label>Telemetry<input id="telemetry" readonly></label><label>RGB command<input id="rgb-topic" readonly></label><label>Strip command<input id="led-topic" readonly></label></div></section>
+  <section><h2>Telemetry</h2><div class="cards">
+    <div class="card" data-sensor="temp"><div class="name">Temperature</div><div class="value">--</div><div class="meta">Waiting</div></div><div class="card" data-sensor="humidity"><div class="name">Humidity</div><div class="value">--</div><div class="meta">Waiting</div></div><div class="card" data-sensor="light"><div class="name">Light ADC</div><div class="value">--</div><div class="meta">Not lux</div></div><div class="card" data-sensor="heart_rate"><div class="name">Heart rate</div><div class="value">--</div><div class="meta">Consumer estimate</div></div><div class="card" data-sensor="spo2"><div class="name">SpO2</div><div class="value">--</div><div class="meta">Consumer estimate</div></div>
+  </div></section>
+  <section><h2>Lighting</h2><div class="toolbar"><strong>RGB</strong><button data-rgb="0">0 Off</button><button data-rgb="1">1 Red</button><button data-rgb="2">2 Green</button><button data-rgb="3">3 Blue</button></div><div class="toolbar"><strong>Strip</strong><button data-led="0">0 Off</button><button data-led="7">7 Warm breath</button><button data-led="8">8 Blue breath</button><button data-led="9">9 Marquee</button></div><p id="effect" class="note">No acknowledgement received.</p></section>
+  <section><h2>Event log</h2><button id="clear">Clear</button><pre id="log">Ready.</pre></section>
+  <script>
+    (() => {
+      let client; const $ = id => document.getElementById(id); const topic = suffix => `${$('device').value.trim()}/${suffix}`;
+      const log = line => { const entries = $('log').textContent === 'Ready.' ? [] : $('log').textContent.split('\n'); entries.unshift(`${new Date().toLocaleTimeString()} ${line}`); $('log').textContent = entries.slice(0, 200).join('\n'); };
+      const buttons = disabled => document.querySelectorAll('[data-rgb],[data-led]').forEach(b => b.disabled = disabled);
+      const preview = () => { $('telemetry').value = topic('sensor/#'); $('rgb-topic').value = topic('actuator/rgb/set'); $('led-topic').value = topic('actuator/led/set'); };
+      const status = (text, online) => { $('status').textContent = text; $('status').className = `status ${online ? 'online' : 'offline'}`; };
+      const publish = (suffix, value) => { if (!client?.connected) return log('Command ignored: not connected'); client.publish(topic(suffix), String(value), { qos:1, retain:false }); log(`TX ${topic(suffix)} = ${value}`); };
+      const onMessage = (name, data) => { const text = data.toString(); log(`RX ${name} = ${text}`); let payload; try { payload = JSON.parse(text); } catch (_) { return; } const prefix = `${$('device').value.trim()}/`;
+        if (name.startsWith(`${prefix}sensor/`)) { const card = document.querySelector(`[data-sensor="${name.slice((`${prefix}sensor/`).length)}"]`); if (!card) return; const valid = payload.valid === true; card.querySelector('.value').textContent = valid ? `${payload.value} ${payload.unit || ''}`.trim() : 'invalid'; card.querySelector('.value').classList.toggle('invalid', !valid); card.querySelector('.meta').textContent = valid ? `device ms: ${payload.ts_ms ?? '--'}` : payload.error || 'unavailable'; }
+        if (name.endsWith('/actuator/rgb/state') || name.endsWith('/actuator/led/state')) $('effect').textContent = payload.accepted ? `Applied: ${payload.state} (command ${payload.command})` : `Rejected: ${payload.reason || 'unknown reason'}`;
+      };
+      $('connect').onclick = () => { const url = $('url').value.trim(); if (!url || !$('device').value.trim()) return log('Enter a WebSocket URL and device ID'); localStorage.setItem('sleep-env-mqtt-ui', JSON.stringify({ url, device:$('device').value, user:$('user').value })); client?.end(true); status('Connecting', false); buttons(true); client = mqtt.connect(url, { username:$('user').value || undefined, password:$('pass').value || undefined, clientId:`sleep-env-web-${Math.random().toString(16).slice(2)}`, clean:true, reconnectPeriod:3000 }); client.on('connect', () => { status('Connected', true); buttons(false); client.subscribe([topic('status'), topic('sensor/#'), topic('actuator/+/state')], { qos:1 }); log('MQTT connected'); }); client.on('message', onMessage); client.on('offline', () => { status('Offline', false); buttons(true); }); client.on('error', error => log(`MQTT error: ${error.message}`)); };
+      $('disconnect').onclick = () => { client?.end(true); status('Disconnected', false); buttons(true); }; $('clear').onclick = () => $('log').textContent = ''; document.querySelectorAll('[data-rgb]').forEach(b => b.onclick = () => publish('actuator/rgb/set', b.dataset.rgb)); document.querySelectorAll('[data-led]').forEach(b => b.onclick = () => publish('actuator/led/set', b.dataset.led)); $('device').addEventListener('input', preview); try { const saved = JSON.parse(localStorage.getItem('sleep-env-mqtt-ui')); if (saved) { $('url').value = saved.url || ''; $('device').value = saved.device || $('device').value; $('user').value = saved.user || ''; } } catch (_) {} preview(); buttons(true);
+    })();
+  </script>
+</body>
+</html>
